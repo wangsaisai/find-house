@@ -85,15 +85,19 @@ async def find_location(request: LocationRequest):
 
     # Prepare the prompt for Gemini
     prompt = f"""
-    I need to find a convenient meeting spot in Beijing for two people.
-    Person 1 is at: {request.address1}
-    Person 2 is at: {request.address2}
+    我需要为两个人找到一个在北京的便捷会面地点。
+    第一个人的地址是: {request.address1}
+    第二个人的地址是: {request.address2}
 
-    Here is the public transit information between their locations:
+    这是他们之间通过公共交通的路线信息:
     {transit_info}
 
-    Based on this, suggest a few (1-3) specific locations (like a mall, a subway station, or a cafe) that are reasonably convenient for both people to reach via public transport.
-    For each suggestion, briefly explain why it's a good choice.
+    请根据这些信息，推荐几个（1-3个）具体的、方便两人碰面的地点（例如商场、地铁站或咖啡馆）。
+    对于每个推荐的地点，请用中文详细介绍其周边情况，比如：
+    - 日常出行是否便利？
+    - 附近有无大型商场或购物中心？
+    - 购物和生活是否方便？
+    - 为什么这个地点对双方来说都比较方便？
     """
 
     # Call Gemini LLM
