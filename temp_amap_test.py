@@ -8,16 +8,27 @@ AMAP_MCP_KEY = os.getenv("AMAP_MCP_KEY")
 AMAP_MCP_URL = f"https://mcp.amap.com/mcp?key={AMAP_MCP_KEY}"
 
 try:
-    # Let's try to call a hypothetical 'geocode' tool.
+    # Initialize the connection as per the curl example
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream"
+    }
     payload = {
-        "tool": "geocode",
-        "arguments": {
-            "address": "北京市朝阳区阜通东大街6号"
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {
+                "name": "test-client",
+                "version": "1.0.0"
+            }
         }
     }
-    response = requests.post(AMAP_MCP_URL, json=payload)
+    response = requests.post(AMAP_MCP_URL, json=payload, headers=headers)
     response.raise_for_status()
-    print("Response from geocode tool:")
+    print("Response from initialize method:")
     print(response.json())
 except requests.exceptions.RequestException as e:
     print(f"An error occurred: {e}")
