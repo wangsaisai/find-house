@@ -3,6 +3,8 @@ import json
 import asyncio
 import google.generativeai as genai
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import aiohttp
@@ -30,6 +32,9 @@ app = FastAPI(
     description="An API to find the best rental location between two work/study addresses based on public transport convenience.",
     version="1.0.0"
 )
+
+# Mount the static directory to serve frontend files
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 class RentalLocationRequest(BaseModel):
     work_address1: str  # 第一个工作/学习地点
@@ -623,9 +628,10 @@ async def debug_test_rental_analysis(work_address1: str, work_address2: str):
         "analysis_results": results
     }
 
-@app.get("/")
-def read_root():
-    return {"message": "Welcome to the MCP-powered Rental Location Finder API!"}
+@app.get("/", response_class=FileResponse)
+async def read_index():
+    """Serves the frontend's index.html file."""
+    return "static/index.html"
 
 if __name__ == "__main__":
     import uvicorn

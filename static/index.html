@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>租房位置智能分析</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>租房位置智能分析</h1>
+        <p>输入两个日常通勤地址，我们将为您推荐最合适的租房区域。</p>
+        
+        <form id="location-form">
+            <div class="form-group">
+                <label for="work_address1">工作/学习地点 A:</label>
+                <input type="text" id="work_address1" name="work_address1" placeholder="例如：浦东新区外高桥" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="work_address2">工作/学习地点 B:</label>
+                <input type="text" id="work_address2" name="work_address2" placeholder="例如：浦东新区德国中心" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="budget_range">预算范围 (可选):</label>
+                <input type="text" id="budget_range" name="budget_range" placeholder="例如：5000-8000元">
+            </div>
+
+            <div class="form-group">
+                <label for="preferences">其他偏好 (可选):</label>
+                <input type="text" id="preferences" name="preferences" placeholder="例如：靠近地铁，环境安静">
+            </div>
+            
+            <button type="submit" id="submit-btn">开始分析</button>
+        </form>
+        
+        <div id="loading" class="hidden">
+            <div class="spinner"></div>
+            <p>正在玩命分析中，请稍候... (通常需要1-2分钟)</p>
+        </div>
+
+        <div id="results" class="hidden">
+            <h2>分析报告</h2>
+            <div id="analysis-output"></div>
+        </div>
+    </div>
+    
+    <script src="/static/script.js"></script>
+</body>
+</html>
