@@ -12,3 +12,24 @@ __pycache__/
 # IDE / Editor specific
 .vscode/
 .idea/
+
+# Android
+*.apk
+*.aab
+*.ap_
+*.a_
+*.apks
+*.dex
+*.class
+build/
+*/build/
+local.properties
+.gradle/
+c.exec
+coverage.ec
+*.iml
+*.hprof
+captures/
+.cxx/
+*.keystore
+*.jks

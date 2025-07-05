@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!--
+   In this file you can specify which resources are included in backup and restore
+   for more information see the docs:
+   https://developer.android.com/guide/topics/data/autobackup
+    -->
+</full-backup-content>

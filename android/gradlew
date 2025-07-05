@@ -1,0 +1,184 @@
+#!/usr/bin/env sh
+
+#
+# Copyright 2015 the original author or authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass any JVM options to this script.
+DEFAULT_JVM_OPTS=""
+
+APP_NAME="Gradle"
+APP_BASE_NAME=`basename "$0"`
+
+# Use the maximum available, or set MAX_FD != -1 to use that value.
+MAX_FD="maximum"
+
+warn () {
+    echo "$*"
+}
+
+die () {
+    echo
+    echo "$*"
+    echo
+    exit 1
+}
+
+# OS specific support (must be 'true' or 'false').
+cygwin=false
+msys=false
+darwin=false
+nonstop=false
+case "`uname`" in
+  CYGWIN* )
+    cygwin=true
+    ;;
+  Darwin* )
+    darwin=true
+    ;;
+  MINGW* )
+    msys=true
+    ;;
+  NONSTOP* )
+    nonstop=true
+    ;;
+esac
+
+CLASSPATH_SEPARATOR=:
+if $cygwin || $msys; then
+  CLASSPATH_SEPARATOR=";"
+fi
+
+# Attempt to set APP_HOME
+# Resolve links: $0 may be a link
+PRG="$0"
+# Need this for relative symlinks.
+while [ -h "$PRG" ] ; do
+    ls=`ls -ld "$PRG"`
+    link=`expr "$ls" : '.*-> \(.*\)$'`
+    if expr "$link" : '/.*' > /dev/null; then
+        PRG="$link"
+    else
+        PRG=`dirname "$PRG"`"/$link"
+    fi
+done
+
+APP_HOME=`dirname "$PRG"`
+
+# For Cygwin, ensure paths are in UNIX format before anything is touched
+if $cygwin ; then
+    [ -n "$APP_HOME" ] &&
+        APP_HOME=`cygpath --unix "$APP_HOME"`
+    [ -n "$JAVA_HOME" ] &&
+        JAVA_HOME=`cygpath --unix "$JAVA_HOME"`
+fi
+
+# Attempt to set JAVA_HOME if it's not already set.
+if [ -z "$JAVA_HOME" ] ; then
+    if $darwin ; then
+        [ -x '/usr/libexec/java_home' ] && JAVA_HOME=`/usr/libexec/java_home`
+    fi
+fi
+if [ -z "$JAVA_HOME" ]; then
+    # If java is in path, use it to find java_home
+    if [ -x "$(command -v java)" ]; then
+        # resolve symlinks
+        java_path_tmp="$(command -v java)"
+        while [ -h "$java_path_tmp" ] ; do
+            ls=`ls -ld "$java_path_tmp"`
+            link=`expr "$ls" : '.*-> \(.*\)$'`
+            if expr "$link" : '/.*' > /dev/null; then
+                java_path_tmp="$link"
+            else
+                java_path_tmp=`dirname "$java_path_tmp"`"/$link"
+            fi
+        done
+        # when java is a symlink to a JRE, this is the JRE home
+        java_path_tmp=$(dirname "$java_path_tmp")
+        # if it is a bin directory, we have a JRE, otherwise a JDK
+        if [ `basename $java_path_tmp` = "bin" ]; then
+            JAVA_HOME=$(dirname "$java_path_tmp")
+        else
+            JAVA_HOME="$java_path_tmp"
+        fi
+    fi
+fi
+if [ -z "$JAVA_HOME" ] ; then
+    die "ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH.
+
+Please set the JAVA_HOME variable in your environment to match the
+location of your Java installation."
+fi
+
+# Set JAVA_EXE
+JAVA_EXE="$JAVA_HOME/bin/java"
+
+# Increase the maximum number of open file descriptors on OS X.
+if $darwin; then
+    if [ "$MAX_FD" = "maximum" -o "$MAX_FD" = "max" ]; then
+        # Use the hard limit, not the soft limit
+        MAX_FD=`ulimit -H -n`
+    fi
+    if [ -n "$MAX_FD" -a "$MAX_FD" != "unlimited" ]; then
+        # Get the current limit
+        __current_limit=`ulimit -n`
+        if [ $? -eq 0 -a `expr "$__current_limit" "<" "$MAX_FD"` -eq 1 ]; then
+            # Try to set the limit
+            ulimit -n $MAX_FD
+            if [ $? -ne 0 ]; then
+                warn "Could not set maximum file descriptor limit: $MAX_FD"
+            fi
+        fi
+    fi
+fi
+
+# Add the gradlew properties file to the GC path
+if [ -f "$APP_HOME/gradle/wrapper/gradle-wrapper.properties" ]; then
+    GC_OPTS="-Dorg.gradle.appname=$APP_BASE_NAME"
+fi
+
+# Collect all arguments for the java command, following the shell quoting and substitution rules
+all_args=()
+while [ $# -gt 0 ]; do
+    all_args=("${all_args[@]}" "$1")
+    shift
+done
+
+# For Cygwin, switch paths to Windows format before running java
+if $cygwin ; then
+    [ -n "$JAVA_HOME" ] &&
+        JAVA_HOME=`cygpath --path --windows "$JAVA_HOME"`
+    [ -n "$APP_HOME" ] &&
+        APP_HOME=`cygpath --path --windows "$APP_HOME"`
+fi
+
+# Split up the JVM options only if the variable is not quoted
+if [ -z "${GRADLE_OPTS+x}" ]; then
+    # The variable is not set, use the default.
+    # The default does not contain any spaces, so we do not need to quote it.
+    GRADLE_OPTS_ARRAY=($DEFAULT_JVM_OPTS)
+else
+    # The variable is set, split it at spaces.
+    # This is not perfect, but it is the best we can do.
+    # It is recommended to use an array instead of a string.
+    GRADle_OPTS_ARRAY=($GRADLE_OPTS)
+fi
+
+# Add -Dorg.gradle.appname="$APP_BASE_NAME" to every GRADLE_OPTS
+# Add GC_OPTS to every GRADLE_OPTS
+# Add APP_HOME/gradle/wrapper/gradle-wrapper.jar to the classpath
+# Add the main class to the command line
+# Add all arguments to the command line
+exec "$JAVA_EXE" "${GRADLE_OPTS_ARRAY[@]}" $GC_OPTS -cp "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain "${all_args[@]}"
