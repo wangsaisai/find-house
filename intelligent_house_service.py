@@ -32,12 +32,12 @@ class RentalLocationRequest(BaseModel):
     budget_range: str = "不限"  # 预算范围，可选
     preferences: str = ""  # 其他偏好，如：靠近地铁、环境安静等
 
-@app.post("/intelligent_find_rental_location")
-async def intelligent_find_rental_location(request: RentalLocationRequest):
+@app.post("/find_rental_location")
+async def find_rental_location(request: RentalLocationRequest):
     """
     使用智能LLM推理和MCP服务找到最佳租房位置
     """
-    logger.info(f"Processing intelligent rental location request for work addresses: {request.work_address1}, {request.work_address2}")
+    logger.info(f"Processing rental location request for work addresses: {request.work_address1}, {request.work_address2}")
     
     try:
         # 使用智能租房位置分析器
@@ -59,23 +59,31 @@ async def intelligent_find_rental_location(request: RentalLocationRequest):
                 "message": "LLM可能未能完成分析流程，请检查工具调用情况"
             }
         
+        # 保持与原始接口一致的返回格式
+        coordinates = analysis_results.get("coordinates", {})
+        
         return {
-            "status": "success",
-            "intelligent_analysis": analysis_results["final_analysis"],
-            "analysis_metadata": {
-                "user_request": {
-                    "work_address1": request.work_address1,
-                    "work_address2": request.work_address2,
+            "rental_location_analysis": analysis_results["final_analysis"],
+            "analysis_data": {
+                "detected_city": coordinates.get("city1") or coordinates.get("city2"),
+                "work_coordinates": {
+                    "work_address1": f"{request.work_address1} -> {coordinates.get('work_location1', 'unknown')}",
+                    "work_address2": f"{request.work_address2} -> {coordinates.get('work_location2', 'unknown')}",
+                    "midpoint": "calculated by intelligent analyzer"
+                },
+                "user_preferences": {
                     "budget_range": request.budget_range,
                     "preferences": request.preferences
                 },
-                "llm_process": {
-                    "tool_calls_count": len(analysis_results.get("tool_calls", [])),
-                    "coordinates_found": len(analysis_results.get("coordinates", {})),
+                "analysis_summary": {
+                    "intelligent_analysis": True,
+                    "tool_calls_executed": len(analysis_results.get("tool_calls", [])),
+                    "llm_guided_process": True,
+                    "coordinates_found": len(coordinates) > 0,
                     "data_types_collected": list(analysis_results.get("analysis_data", {}).keys())
                 }
             },
-            "raw_analysis_data": analysis_results
+            "raw_mcp_data": analysis_results
         }
         
     except Exception as e:
@@ -132,11 +140,63 @@ async def compare_analyzers(work_address1: str, work_address2: str, budget_range
         logger.error(f"Analyzer comparison failed: {e}")
         raise HTTPException(status_code=500, detail=f"Analyzer comparison failed: {e}")
 
+# 调试端点 - 保持与原始house.py一致的接口
+@app.get("/debug/available-tools")
+async def debug_available_tools():
+    """调试：获取MCP服务器上可用的工具"""
+    try:
+        from intelligent_rental_analyzer import MCPToolManager, AMAP_MCP_URL
+        async with MCPToolManager(AMAP_MCP_URL) as tool_manager:
+            return {
+                "available_tools": tool_manager.available_tools,
+                "tools_description": tool_manager.get_tools_description()
+            }
+    except Exception as e:
+        logger.error(f"Failed to get available tools: {e}")
+        return {"error": f"Failed to get available tools: {e}"}
+
+@app.get("/debug/test-geocode/{address}")
+async def debug_test_geocode(address: str):
+    """调试：测试地理编码功能"""
+    try:
+        from intelligent_rental_analyzer import MCPToolManager, AMAP_MCP_URL
+        analyzer = IntelligentRentalAnalyzer()
+        async with MCPToolManager(AMAP_MCP_URL) as tool_manager:
+            result = await tool_manager.call_tool("maps_geo", {"address": address})
+            coords, city = analyzer._extract_coordinates_and_city(result)
+            return {
+                "address": address,
+                "geocode_result": result,
+                "extracted_coordinates": coords,
+                "detected_city": city
+            }
+    except Exception as e:
+        logger.error(f"Geocode test failed: {e}")
+        return {"error": f"Geocode test failed: {e}"}
+
+@app.get("/debug/test-rental-analysis/{work_address1}/{work_address2}")
+async def debug_test_rental_analysis(work_address1: str, work_address2: str):
+    """调试：测试完整的租房分析计划"""
+    try:
+        analyzer = IntelligentRentalAnalyzer()
+        results = await analyzer.analyze_rental_locations(work_address1, work_address2)
+        coordinates = results.get("coordinates", {})
+        
+        return {
+            "detected_city": coordinates.get("city1") or coordinates.get("city2"),
+            "coordinates": {
+                "work_location1": coordinates.get("work_location1"),
+                "work_location2": coordinates.get("work_location2")
+            },
+            "analysis_results": results
+        }
+    except Exception as e:
+        logger.error(f"Rental analysis test failed: {e}")
+        return {"error": f"Rental analysis test failed: {e}"}
+
 @app.get("/debug/intelligent-analysis-steps/{work_address1}/{work_address2}")
 async def debug_intelligent_analysis_steps(work_address1: str, work_address2: str):
-    """
-    调试：查看智能分析器的详细执行步骤
-    """
+    """调试：查看智能分析器的详细执行步骤"""
     try:
         analyzer = IntelligentRentalAnalyzer()
         results = await analyzer.analyze_rental_locations(work_address1, work_address2)
