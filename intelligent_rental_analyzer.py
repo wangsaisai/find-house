@@ -468,64 +468,210 @@ class IntelligentRentalAnalyzer:
     async def _generate_final_analysis(self, analysis_results: Dict[str, Any]) -> str:
         """生成最终的租房分析报告"""
         
-        # 构建详细的数据总结给LLM
-        data_summary = self._build_data_summary_for_llm(analysis_results)
+        # 构建详细的数据总结给LLM，参考house.py的prompt格式
+        coordinates = analysis_results.get("coordinates", {})
+        work_address1 = analysis_results['work_address1']
+        work_address2 = analysis_results['work_address2']
+        budget_range = analysis_results['budget_range']
+        preferences = analysis_results['preferences']
+        
+        # 获取坐标和城市信息
+        location1_coords = coordinates.get('work_location1', 'unknown')
+        location2_coords = coordinates.get('work_location2', 'unknown')
+        target_city = coordinates.get('city1') or coordinates.get('city2')
+        
+        # 构建中点坐标（如果有的话）
+        midpoint = "calculated by intelligent analyzer"
+        if location1_coords != 'unknown' and location2_coords != 'unknown':
+            try:
+                lon1, lat1 = map(float, location1_coords.split(','))
+                lon2, lat2 = map(float, location2_coords.split(','))
+                mid_lon = (lon1 + lon2) / 2
+                mid_lat = (lat1 + lat2) / 2
+                midpoint = f"{mid_lon},{mid_lat}"
+            except:
+                pass
+        
+        # 检查是否有交通信息
+        transit_available = False
+        transit_error = "暂无路线信息"
+        transit_data = ""
+        
+        # 从工具调用结果中查找交通信息
+        for call in analysis_results.get("tool_calls", []):
+            if "direction" in call.get("tool_name", ""):
+                if 'result' in call and not call.get('error'):
+                    result = call['result']
+                    result_content = result.get("result", {})
+                    if not result_content.get("isError", True):
+                        transit_available = True
+                        transit_data = json.dumps(result, ensure_ascii=False, indent=2)
+                        break
+                    else:
+                        content = result_content.get('content', [])
+                        if content and len(content) > 0:
+                            transit_error = content[0].get('text', '交通路线查询失败')
+        
+        # 准备详细的数据展示
+        analysis_data = analysis_results.get("analysis_data", {})
+        residential_areas_data = ""
+        life_facilities_data = ""
+        transport_hubs_data = ""
+        popular_areas_data = ""
+        commute_analysis_data = ""
+        
+        # 从工具调用结果中提取各类数据
+        for call in analysis_results.get("tool_calls", []):
+            tool_name = call.get("tool_name", "")
+            if 'result' in call and not call.get('error'):
+                if "around_search" in tool_name:
+                    args = call.get("arguments", {})
+                    keywords = args.get("keywords", "")
+                    if "住宅" in keywords or "公寓" in keywords or "租房" in keywords:
+                        residential_areas_data = json.dumps(call['result'], ensure_ascii=False, indent=2)
+                    elif "超市" in keywords or "菜市场" in keywords or "医院" in keywords or "银行" in keywords:
+                        life_facilities_data = json.dumps(call['result'], ensure_ascii=False, indent=2)
+                    elif "地铁站" in keywords or "公交站" in keywords:
+                        transport_hubs_data = json.dumps(call['result'], ensure_ascii=False, indent=2)
+                elif "text_search" in tool_name:
+                    popular_areas_data = json.dumps(call['result'], ensure_ascii=False, indent=2)
+        
+        # 构建通勤分析数据
+        commute_calls = [call for call in analysis_results.get("tool_calls", []) 
+                        if "direction" in call.get("tool_name", "") and 'result' in call and not call.get('error')]
+        if commute_calls:
+            commute_analysis_data = json.dumps([call['result'] for call in commute_calls], ensure_ascii=False, indent=2)
+        
+        # 准备给 Gemini 的优化提示（缩短数据部分，保持详细输出）
+        city_info = f"在{target_city}" if target_city else "在检测到的城市"
+        budget_info = f"预算范围：{budget_range}" if budget_range != "不限" else "预算：无特殊限制"
+        preferences_info = f"特殊偏好：{preferences}" if preferences else "无特殊偏好"
+        
+        # 精简数据展示，避免prompt过长导致超时
+        data_summary = ""
+        if transit_available:
+            data_summary += "✅ 已获取交通路线数据\n"
+        if residential_areas_data:
+            data_summary += "✅ 已获取住宅区域数据\n"
+        if life_facilities_data:
+            data_summary += "✅ 已获取生活设施数据\n"
+        if transport_hubs_data:
+            data_summary += "✅ 已获取交通枢纽数据\n"
+        if popular_areas_data:
+            data_summary += "✅ 已获取热门区域数据\n"
+        if commute_analysis_data:
+            data_summary += "✅ 已获取通勤分析数据\n"
         
         final_prompt = f"""
-        基于收集到的所有数据，请生成一份详细的租房位置分析报告。
+        请为租房需求生成详细的分析报告：
 
-        **用户需求回顾：**
-        - 工作地点A: {analysis_results['work_address1']}
-        - 工作地点B: {analysis_results['work_address2']}
-        - 预算范围: {analysis_results['budget_range']}
-        - 特殊偏好: {analysis_results['preferences']}
+        基本信息：
+        - 工作地点A: {work_address1}
+        - 工作地点B: {work_address2}
+        - 城市: {target_city}
+        - {budget_info}
+        - {preferences_info}
 
-        **收集到的数据：**
+        数据收集状况：
         {data_summary}
 
-        请生成一份结构化的租房建议报告，包括：
+        请生成包含以下结构的详细报告：
 
-        ## 🏠 推荐租房区域 (至少3个)
+        ## 🏠 推荐租房区域
 
         ### 🌟 推荐区域1: [具体区域名称]
-        **推荐理由：** [基于数据分析的推荐理由]
-        **区域特点：** [区域环境描述]
-        **预估租金：** [租金范围]
+        **推荐理由：** [详细分析通勤便利性]
+        **区域特点：** [环境、房源、生活氛围]
+        **预估租金：** [具体价格范围]
         **生活便利度：** ⭐⭐⭐⭐⭐
 
-        #### 🚇 通勤分析
-        - **到工作地点A**: [具体路线和时间]
-        - **到工作地点B**: [具体路线和时间]
+        #### 🚇 到工作地点A的通勤：
+        **最佳路线：**
+        1. 步行到地铁站：[站名]，约[X]分钟
+        2. 地铁路线：[线路]从[起站]到[终站]，约[X]分钟
+        3. 步行到工作地点：约[X]分钟
+        **总时间：约[X]分钟，费用：[X]元/天**
 
-        #### 🏘️ 周边设施
-        [基于收集的POI数据分析周边设施]
+        #### 🚇 到工作地点B的通勤：
+        **最佳路线：**
+        1. 步行到地铁站：[站名]，约[X]分钟
+        2. 地铁路线：[线路]从[起站]到[终站]，约[X]分钟
+        3. 步行到工作地点：约[X]分钟
+        **总时间：约[X]分钟，费用：[X]元/天**
+
+        #### 🏘️ 周边设施：
+        - 购物：[具体商场、超市]
+        - 餐饮：[餐厅类型、外卖便利度]
+        - 医疗：[医院、诊所]
+        - 交通：[地铁站、公交线路]
 
         ### 🌟 推荐区域2: [第二个区域]
-        [类似结构]
+        [完整的类似结构分析]
 
         ### 🌟 推荐区域3: [第三个区域]
-        [类似结构]
+        [完整的类似结构分析]
 
-        ## 📊 综合分析
+        ## 📊 区域对比分析
 
-        ### 🎯 最佳选择
-        [根据通勤便利性、生活便利性、经济性等因素综合评估]
+        | 区域 | 通勤便利度 | 生活便利度 | 预估租金 | 环境质量 | 综合推荐度 |
+        |------|-----------|-----------|----------|----------|-----------|
+        | 区域1 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | 中等 | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+        | 区域2 | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | 较高 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
+        | 区域3 | ⭐⭐⭐ | ⭐⭐⭐ | 较低 | ⭐⭐⭐ | ⭐⭐⭐ |
 
-        ### 💡 选房建议
-        [基于分析数据的实用建议]
+        ## 💡 实用建议
 
-        ### ⚠️ 注意事项
-        [需要注意的问题和风险]
+        ### 选房要点：
+        - 交通优先：[具体建议]
+        - 生活配套：[必备设施]
+        - 性价比：[租金建议]
 
-        请确保所有建议都基于实际收集到的地图数据，提供具体且实用的信息。
+        ### 成本分析：
+        - 月交通费：[详细计算]
+        - 生活成本：[周边消费]
+        - 时间成本：[通勤时间价值]
+
+        ### 看房清单：
+        - [ ] 实地体验通勤路线
+        - [ ] 检查网络信号
+        - [ ] 了解水电费用
+        - [ ] 查看安全状况
+
+        请基于{target_city}实际情况，提供具体详细的租房建议，确保三个区域都有完整的通勤分析。
         """
         
         try:
-            response = self.model.generate_content(final_prompt)
+            logger.info("开始调用Gemini生成最终分析报告...")
+            
+            # 设置生成配置，去掉token限制，降低温度以提高准确性
+            generation_config = genai.types.GenerationConfig(
+                temperature=0.2,  # 降低温度以提高准确性和一致性
+                candidate_count=1
+            )
+            
+            response = self.model.generate_content(
+                final_prompt,
+                generation_config=generation_config
+            )
+            
+            logger.info("Gemini分析报告生成完成")
             return response.text
+            
         except Exception as e:
             logger.error(f"生成最终分析报告失败: {e}")
-            return f"分析报告生成失败: {str(e)}"
+            logger.info(f"错误详情: {str(e)}")
+            
+            # 尝试使用更简化的prompt重新生成
+            try:
+                logger.info("尝试使用简化prompt重新生成...")
+                simplified_analysis = await self._generate_simplified_analysis(analysis_results)
+                return simplified_analysis
+            except Exception as e2:
+                logger.error(f"简化分析也失败: {e2}")
+                # 最后的fallback
+                fallback_analysis = self._generate_fallback_analysis(analysis_results)
+                logger.info("使用最基础的fallback分析报告")
+                return fallback_analysis
     
     def _build_data_summary_for_llm(self, analysis_results: Dict[str, Any]) -> str:
         """为LLM构建数据总结"""
@@ -579,6 +725,148 @@ class IntelligentRentalAnalyzer:
             return f"{len(data)}条记录"
         else:
             return "已收集"
+    
+    async def _generate_simplified_analysis(self, analysis_results: Dict[str, Any]) -> str:
+        """使用简化prompt生成详细分析报告"""
+        coordinates = analysis_results.get("coordinates", {})
+        work_address1 = analysis_results['work_address1']
+        work_address2 = analysis_results['work_address2']
+        budget_range = analysis_results['budget_range']
+        preferences = analysis_results['preferences']
+        
+        location1_coords = coordinates.get('work_location1', 'unknown')
+        location2_coords = coordinates.get('work_location2', 'unknown')
+        target_city = coordinates.get('city1') or coordinates.get('city2', '上海')
+        
+        # 提取关键数据
+        tool_calls = analysis_results.get("tool_calls", [])
+        successful_calls = [call for call in tool_calls if 'error' not in call]
+        
+        # 构建简化但详细的prompt
+        simplified_prompt = f"""
+        请为租房需求生成详细的分析报告：
+
+        基本信息：
+        - 工作地点A: {work_address1}
+        - 工作地点B: {work_address2}
+        - 城市: {target_city}
+        - 预算: {budget_range}
+        - 偏好: {preferences}
+        - 已收集数据: {len(successful_calls)}项
+
+        请生成包含以下内容的详细报告：
+
+        ## 🏠 推荐租房区域
+
+        ### 🌟 推荐区域1: [具体区域名称]
+        **推荐理由：** [详细理由]
+        **区域特点：** [环境描述]
+        **预估租金：** [具体范围]
+        **生活便利度：** ⭐⭐⭐⭐⭐
+
+        #### 🚇 通勤分析:
+        - **到工作地点A**: 地铁[X]线，约[X]分钟，费用[X]元/天
+        - **到工作地点B**: 地铁[Y]线，约[Y]分钟，费用[Y]元/天
+
+        #### 🏘️ 周边设施:
+        - 购物、餐饮、医疗、交通等详细信息
+
+        ### 🌟 推荐区域2: [第二个区域]
+        [类似详细结构]
+
+        ### 🌟 推荐区域3: [第三个区域]
+        [类似详细结构]
+
+        ## 📊 区域对比分析
+        [表格对比]
+
+        ## 💡 实用建议
+        [详细的选房建议]
+
+        基于{target_city}的实际情况，提供具体实用的租房建议。
+        """
+        
+        try:
+            generation_config = genai.types.GenerationConfig(
+                temperature=0.1,
+                candidate_count=1
+            )
+            
+            response = self.model.generate_content(
+                simplified_prompt,
+                generation_config=generation_config
+            )
+            
+            return response.text
+            
+        except Exception as e:
+            logger.error(f"简化分析失败: {e}")
+            raise e
+
+    def _generate_fallback_analysis(self, analysis_results: Dict[str, Any]) -> str:
+        """生成备用的简化分析报告"""
+        coordinates = analysis_results.get("coordinates", {})
+        work_address1 = analysis_results['work_address1']
+        work_address2 = analysis_results['work_address2']
+        budget_range = analysis_results['budget_range']
+        preferences = analysis_results['preferences']
+        
+        location1_coords = coordinates.get('work_location1', 'unknown')
+        location2_coords = coordinates.get('work_location2', 'unknown')
+        target_city = coordinates.get('city1') or coordinates.get('city2', '未知城市')
+        
+        # 统计工具调用结果
+        tool_calls = analysis_results.get("tool_calls", [])
+        successful_calls = [call for call in tool_calls if 'error' not in call]
+        
+        fallback_report = f"""
+# 🏠 智能租房位置分析报告
+
+## 基本信息
+- **工作地点A**: {work_address1}
+- **工作地点B**: {work_address2}
+- **检测城市**: {target_city}
+- **预算范围**: {budget_range}
+- **特殊偏好**: {preferences or '无'}
+
+## 数据收集状况
+- **成功执行的工具调用**: {len(successful_calls)}次
+- **获取到的坐标信息**: {'是' if location1_coords != 'unknown' and location2_coords != 'unknown' else '否'}
+
+## 🌟 推荐区域
+
+### 推荐区域1: {target_city}市中心区域
+**推荐理由**: 位于城市中心，交通网络发达，到两个工作地点都相对便利。
+**预估租金**: 根据{target_city}市场价格，预计月租金在{budget_range}范围内。
+**生活便利度**: ⭐⭐⭐⭐
+
+### 推荐区域2: 两个工作地点的中间区域
+**推荐理由**: 位于两个工作地点的几何中心附近，通勤距离相对均衡。
+**预估租金**: 中等价位区域。
+**生活便利度**: ⭐⭐⭐⭐
+
+### 推荐区域3: 交通枢纽附近
+**推荐理由**: 靠近地铁站或重要交通枢纽，换乘便利。
+**预估租金**: 因交通便利，租金可能略高。
+**生活便利度**: ⭐⭐⭐⭐⭐
+
+## 💡 选房建议
+
+1. **交通优先**: 选择距离地铁站步行10分钟以内的房源
+2. **生活配套**: 确保周边有超市、医院等基本生活设施
+3. **实地考察**: 建议实地体验通勤路线，确认实际通勤时间
+4. **安全考虑**: 选择治安良好的小区和区域
+
+## ⚠️ 注意事项
+本报告基于有限的数据生成。建议：
+- 进一步实地调研具体区域
+- 使用地图软件规划具体通勤路线
+- 咨询当地房产中介获取最新房源信息
+
+*注：由于技术原因，本次未能获取完整的地图数据，建议使用专业的房产搜索平台进行进一步分析。*
+        """
+        
+        return fallback_report.strip()
 
 # 使用示例
 async def example_usage():
