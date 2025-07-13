@@ -27,6 +27,9 @@ app = FastAPI(
 # Mount the static directory to serve frontend files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# 创建全局分析器实例，保持对话状态
+analyzer = UniversalTravelAnalyzer()
+
 class TravelRequest(BaseModel):
     """通用出行请求模型"""
     query: str  # 用户的完整需求描述
@@ -49,10 +52,7 @@ async def analyze_travel_request(request: TravelRequest):
     logger.info(f"Processing travel request: {request.query}")
     
     try:
-        # 使用通用智能分析器
-        analyzer = UniversalTravelAnalyzer()
-        
-        # 执行智能分析
+        # 执行智能分析 - 使用全局analyzer实例
         analysis_results = await analyzer.analyze_request(
             query=request.query,
             context=request.context,
@@ -96,13 +96,7 @@ async def chat_with_analyzer(request: ChatRequest):
     logger.info(f"Processing chat message: {request.message}")
     
     try:
-        analyzer = UniversalTravelAnalyzer()
-        
-        # 如果有会话ID，尝试恢复会话状态
-        if request.conversation_id:
-            analyzer.load_conversation_state(request.conversation_id, request.session_data)
-        
-        # 处理对话消息
+        # 处理对话消息 - 使用全局analyzer实例
         chat_result = await analyzer.process_chat_message(
             message=request.message,
             conversation_id=request.conversation_id

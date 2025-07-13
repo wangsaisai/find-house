@@ -778,6 +778,8 @@
             const chatCard = document.getElementById('chat-card');
             const tabBtns = document.querySelectorAll('.tab-btn');
 
+            console.log('切换模式到:', mode, '当前conversation_id:', currentConversationId);
+
             // 清除所有active状态
             tabBtns.forEach(btn => btn.classList.remove('active'));
             
@@ -902,6 +904,8 @@
                     conversation_id: currentConversationId
                 };
 
+                console.log('发送请求:', requestData); // 调试日志
+
                 const response = await fetch('/chat', {
                     method: 'POST',
                     headers: {
@@ -911,12 +915,16 @@
                 });
 
                 const result = await response.json();
+                console.log('收到响应:', result); // 调试日志
 
                 // 移除加载提示
                 document.getElementById(loadingId).remove();
 
                 if (result.success) {
+                    // 更新conversation_id
                     currentConversationId = result.conversation_id;
+                    console.log('更新conversation_id:', currentConversationId); // 调试日志
+                    
                     addMessageToHistory('assistant', result.response, false, true); // 启用Markdown渲染
                     
                     // 显示建议（如果有）
@@ -983,6 +991,7 @@
             document.getElementById('chat-message').value = '';
             document.getElementById('conversation-history').innerHTML = '';
             currentConversationId = null;
+            console.log('清空对话，重置conversation_id:', currentConversationId);
         }
 
         // 支持Enter键发送消息

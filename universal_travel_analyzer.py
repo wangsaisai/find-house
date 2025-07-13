@@ -166,6 +166,7 @@ class ConversationManager:
     def add_message(self, conversation_id: str, role: str, content: str, metadata: Dict = None):
         """添加消息到对话"""
         if conversation_id not in self.conversations:
+            logger.warning(f"对话ID {conversation_id} 不存在，创建新对话")
             conversation_id = self.create_conversation()
         
         message = {
@@ -176,6 +177,9 @@ class ConversationManager:
         }
         
         self.conversations[conversation_id]["messages"].append(message)
+        logger.info(f"添加消息到对话 {conversation_id}: {role} - {content[:50]}...")
+        logger.info(f"当前对话消息数: {len(self.conversations[conversation_id]['messages'])}")
+        
         return conversation_id
     
     def get_conversation_context(self, conversation_id: str) -> str:
@@ -186,11 +190,16 @@ class ConversationManager:
         messages = self.conversations[conversation_id]["messages"]
         context_lines = []
         
-        for msg in messages[-5:]:  # 只保留最近5条消息
+        # 保留最近8条消息，提供更多上下文
+        for msg in messages[-8:]:
             role = "用户" if msg["role"] == "user" else "助手"
-            context_lines.append(f"{role}: {msg['content']}")
+            # 截断过长的消息内容
+            content = msg['content'][:500] + "..." if len(msg['content']) > 500 else msg['content']
+            context_lines.append(f"{role}: {content}")
         
-        return "\n".join(context_lines)
+        context = "\n".join(context_lines)
+        logger.info(f"获取对话上下文 (ID: {conversation_id}): {context}")
+        return context
 
 class UniversalTravelAnalyzer:
     """通用智能出行分析器"""
@@ -1013,11 +1022,21 @@ class UniversalTravelAnalyzer:
         if not conversation_id:
             conversation_id = self.conversation_manager.create_conversation()
         
+        # 先获取现有上下文（不包含当前消息）
+        existing_context = self.conversation_manager.get_conversation_context(conversation_id)
+        logger.info(f"现有对话上下文 (添加新消息前): {existing_context}")
+        
         # 添加用户消息到对话历史
         self.conversation_manager.add_message(conversation_id, "user", message)
         
-        # 获取对话上下文
+        # 获取完整对话上下文（包含当前消息）
         context = self.conversation_manager.get_conversation_context(conversation_id)
+        logger.info(f"完整对话上下文 (添加新消息后): {context}")
+        
+        # 调试：显示对话历史数量
+        conv = self.conversation_manager.conversations.get(conversation_id, {})
+        message_count = len(conv.get("messages", []))
+        logger.info(f"对话ID: {conversation_id}, 消息总数: {message_count}")
         
         # 分析消息类型
         if self._is_simple_question(message):
@@ -1099,20 +1118,22 @@ class UniversalTravelAnalyzer:
             
             # 询问LLM下一步行动（对话模式）
             next_step_prompt = f"""
-            对话上下文:
+            **完整对话历史**:
             {context}
             
-            当前用户查询: "{query}"
-            分析类型: {intent_analysis.get('analysis_type', 'general')}
+            **当前用户消息**: "{query}"
+            **分析类型**: {intent_analysis.get('analysis_type', 'general')}
             
-            当前分析状态:
+            **当前分析状态**:
             {current_status}
 
-            已执行的工具调用:
+            **已执行的工具调用**:
             {self._format_tool_calls_summary(analysis_results["tool_calls"])}
 
-            可用工具:
+            **可用工具**:
             {tool_manager.get_tools_description()}
+
+            **重要**：请基于完整的对话历史来理解用户需求，不要忽略之前的对话内容。
 
             作为智能对话助手，请决定下一步行动：
             
@@ -1289,6 +1310,7 @@ class UniversalTravelAnalyzer:
     def load_conversation_state(self, conversation_id: str, session_data: Dict[str, Any]):
         """加载对话状态"""
         if conversation_id not in self.conversation_manager.conversations:
+            logger.info(f"创建新对话状态: {conversation_id}")
             self.conversation_manager.conversations[conversation_id] = {
                 "id": conversation_id,
                 "created_at": datetime.now().isoformat(),
@@ -1296,6 +1318,8 @@ class UniversalTravelAnalyzer:
                 "context": {},
                 "session_data": session_data
             }
+        else:
+            logger.info(f"加载已存在的对话状态: {conversation_id}")
     
     async def get_system_capabilities(self) -> Dict[str, Any]:
         """获取系统能力"""
