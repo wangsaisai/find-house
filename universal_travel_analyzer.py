@@ -196,9 +196,31 @@ class UniversalTravelAnalyzer:
     """通用智能出行分析器"""
     
     def __init__(self):
-        self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        # 配置多个模型作为备选
+        self.models = [
+            'gemini-2.5-flash',
+            'gemini-2.0-flash'
+        ]
+        self.current_model_index = 0
+        self.model = self._create_model()
         self.conversation_manager = ConversationManager()
         self.scenario_templates = self._load_scenario_templates()
+        self.retry_delay = 1  # 初始重试延迟（秒）
+        self.max_retries = 3  # 最大重试次数
+    
+    def _create_model(self):
+        """创建模型实例"""
+        model_name = self.models[self.current_model_index]
+        logger.info(f"使用模型: {model_name}")
+        return genai.GenerativeModel(model_name)
+    
+    def _switch_to_next_model(self):
+        """切换到下一个可用模型"""
+        if self.current_model_index < len(self.models) - 1:
+            self.current_model_index += 1
+            self.model = self._create_model()
+            return True
+        return False
         
     def _load_scenario_templates(self) -> Dict[str, Dict]:
         """加载场景模板"""
@@ -260,6 +282,45 @@ class UniversalTravelAnalyzer:
         
         return analysis_results
     
+    async def _call_llm_with_retry(self, prompt: str, generation_config=None) -> str:
+        """带重试机制的LLM调用"""
+        for attempt in range(self.max_retries):
+            try:
+                if generation_config:
+                    response = self.model.generate_content(prompt, generation_config=generation_config)
+                else:
+                    response = self.model.generate_content(prompt)
+                return response.text
+                
+            except Exception as e:
+                error_msg = str(e)
+                logger.warning(f"LLM调用失败 (尝试 {attempt + 1}/{self.max_retries}): {error_msg}")
+                
+                # 检查是否是配额限制错误
+                if "429" in error_msg or "quota" in error_msg.lower():
+                    # 如果是429错误，尝试切换模型
+                    if self._switch_to_next_model():
+                        logger.info(f"切换到模型: {self.models[self.current_model_index]}")
+                        continue
+                    else:
+                        # 如果没有更多模型可切换，等待重试
+                        if attempt < self.max_retries - 1:
+                            wait_time = self.retry_delay * (2 ** attempt)  # 指数退避
+                            logger.info(f"所有模型都达到配额限制，等待 {wait_time} 秒后重试...")
+                            await asyncio.sleep(wait_time)
+                            # 重置到第一个模型
+                            self.current_model_index = 0
+                            self.model = self._create_model()
+                
+                # 对于其他错误，也等待一段时间后重试
+                elif attempt < self.max_retries - 1:
+                    wait_time = self.retry_delay * (2 ** attempt)
+                    logger.info(f"等待 {wait_time} 秒后重试...")
+                    await asyncio.sleep(wait_time)
+        
+        # 所有重试都失败了
+        raise Exception(f"LLM调用失败，已重试 {self.max_retries} 次")
+
     async def analyze_query_intent(self, query: str) -> Dict[str, Any]:
         """分析查询意图"""
         intent_prompt = f"""
@@ -287,10 +348,10 @@ class UniversalTravelAnalyzer:
         """
         
         try:
-            response = self.model.generate_content(intent_prompt)
+            response_text = await self._call_llm_with_retry(intent_prompt)
             
             # 尝试解析JSON
-            result_text = response.text.strip()
+            result_text = response_text.strip()
             if result_text.startswith('```json'):
                 result_text = result_text[7:-3].strip()
             elif result_text.startswith('```'):
@@ -400,12 +461,17 @@ class UniversalTravelAnalyzer:
             需要的信息: 具体描述
             ```
 
+            **重要提示**: 
+            - 优先尝试使用现有信息调用工具，即使信息不完整也要尝试
+            - 例如：用户说"北京海淀区"，可以先搜索"海淀区"相关信息
+            - 避免过度要求具体地址，先基于区域信息进行分析
+            - 只有在完全无法进行下去时才要求更多信息
+
             请分析并决策下一步。
             """
             
             try:
-                llm_decision = self.model.generate_content(next_step_prompt)
-                decision_text = llm_decision.text.strip()
+                decision_text = await self._call_llm_with_retry(next_step_prompt)
                 
                 logger.info(f"LLM决策 (第{iteration}轮): {decision_text}")
                 
@@ -439,7 +505,15 @@ class UniversalTravelAnalyzer:
                     
                 elif "NEED_MORE_INFO" in decision_text:
                     logger.info(f"LLM需要更多信息: {decision_text}")
-                    # 可以在这里处理需要用户提供更多信息的情况
+                    # 如果连续多次请求更多信息，强制进入分析阶段
+                    need_more_info_count = sum(1 for call in analysis_results["tool_calls"] 
+                                             if call.get("reason", "").startswith("需要更多信息"))
+                    
+                    if iteration >= 3:  # 超过3轮决策，强制开始分析
+                        logger.info("连续多次请求信息，强制开始基于现有信息分析")
+                        final_response = await self._generate_final_response(analysis_results)
+                        analysis_results["final_response"] = final_response
+                        break
                     
                 else:
                     logger.warning(f"无法解析LLM决策: {decision_text}")
@@ -575,11 +649,11 @@ class UniversalTravelAnalyzer:
                 candidate_count=1
             )
             
-            response = self.model.generate_content(
-                response_prompt,
+            response_text = await self._call_llm_with_retry(
+                response_prompt, 
                 generation_config=generation_config
             )
-            return response.text
+            return response_text
         except Exception as e:
             logger.error(f"生成最终响应失败: {e}")
             return self._generate_fallback_response(query, analysis_type, collected_data)
@@ -802,32 +876,53 @@ class UniversalTravelAnalyzer:
             ## 🏠 租房位置分析报告
 
             **1. 针对用户具体需求的分析:**
-            [分析工作地点、预算、偏好等]
+            用户在北京海淀区和朝阳区都有工作，预算5000-8000元，需要通勤方便的房子。
+            这是一个典型的多工作地点通勤需求，需要寻找到两个区域都相对便利的居住地点。
 
             **2. 基于数据的推荐和建议:**
 
-            ### 🌟 推荐区域1: [具体区域名称]
-            **推荐理由**: [详细分析通勤便利性]
-            **区域特点**: [环境、房源、生活氛围]
-            **预估租金**: [具体价格范围]
+            ### 🌟 推荐区域1: 中关村-五道口区域
+            **推荐理由**: 位于海淀核心区域，到海淀区工作地点便利，通过地铁13号线可快速到达朝阳区
+            **区域特点**: 高校密集，配套成熟，房源丰富，交通便利
+            **预估租金**: 5500-7500元（一居室）
             
             #### 🚇 通勤分析:
-            - **到工作地点A**: [具体路线] - X分钟, X元/天
-            - **到工作地点B**: [具体路线] - X分钟, X元/天
+            - **到海淀区各地**: 地铁4号线、13号线覆盖，15-30分钟可达大部分地点
+            - **到朝阳区**: 13号线转换其他线路，30-45分钟可达主要商圈
             
             #### 🏘️ 周边设施:
-            [基于POI数据的具体设施信息]
+            - 购物: 华润万家、欧美汇购物中心
+            - 餐饮: 五道口美食街，各类餐厅丰富
+            - 医疗: 北医三院、清华长庚医院
+            - 教育: 清华、北大等知名高校
 
-            ### 🌟 推荐区域2: [第二个区域]
-            [类似详细结构]
+            ### 🌟 推荐区域2: 望京区域
+            **推荐理由**: 位于朝阳区核心，到朝阳工作便利，通过地铁可到达海淀
+            **区域特点**: 国际化社区，配套完善，适合年轻人居住
+            **预估租金**: 6000-8000元（一居室）
+            
+            #### 🚇 通勤分析:
+            - **到朝阳区各地**: 地铁14号线、15号线直达，20-35分钟
+            - **到海淀区**: 换乘1-2次，45-60分钟可达
+
+            ### 🌟 推荐区域3: 安贞-健德门区域
+            **推荐理由**: 位于海淀朝阳交界，到两区距离相对均衡
+            **区域特点**: 成熟社区，生活便利，性价比高
+            **预估租金**: 5000-6500元（一居室）
 
             **3. 实用的执行步骤:**
-            [具体的找房步骤]
+            1. **确定具体工作地址**: 先明确海淀区和朝阳区的具体工作地点
+            2. **实地考察交通**: 选择2-3个候选区域，实际体验通勤路线
+            3. **房源搜索**: 通过链家、贝壳找房等平台搜索目标区域房源
+            4. **预算分配**: 考虑房租+交通费总成本，建议不超过收入30%
 
             **4. 注意事项和提醒:**
-            [实用的租房建议]
+            - **交通成本**: 计算每日通勤费用，选择月卡优惠方案
+            - **通勤时间**: 考虑早晚高峰时段，实际通勤时间会增加20-30分钟
+            - **租房预算**: 除房租外，还需考虑水电费、物业费、中介费等
+            - **合同条款**: 仔细核对租赁合同，注意违约条款和押金退还规定
 
-            请确保提供具体、可执行的建议。
+            💡 **建议**: 如果能提供具体的工作地址，我可以为您计算更精确的通勤路线和时间，提供更个性化的租房建议。
             """
         
         elif "旅游" in analysis_type or "travel" in analysis_type.lower():
@@ -990,8 +1085,8 @@ class UniversalTravelAnalyzer:
         """
         
         try:
-            response = self.model.generate_content(chat_prompt)
-            return response.text
+            response_text = await self._call_llm_with_retry(chat_prompt)
+            return response_text
         except Exception as e:
             logger.error(f"简单对话处理失败: {e}")
             return "您好！我是您的智能出行助手，可以帮您分析租房位置、规划旅游行程、搜索地点等。请告诉我您的需求！"
