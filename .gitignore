@@ -33,3 +33,5 @@ captures/
 .cxx/
 *.keystore
 *.jks
+
+wechat*
