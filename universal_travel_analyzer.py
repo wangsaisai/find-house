@@ -505,15 +505,11 @@ class UniversalTravelAnalyzer:
                     
                 elif "NEED_MORE_INFO" in decision_text:
                     logger.info(f"LLM需要更多信息: {decision_text}")
-                    # 如果连续多次请求更多信息，强制进入分析阶段
-                    need_more_info_count = sum(1 for call in analysis_results["tool_calls"] 
-                                             if call.get("reason", "").startswith("需要更多信息"))
-                    
-                    if iteration >= 3:  # 超过3轮决策，强制开始分析
-                        logger.info("连续多次请求信息，强制开始基于现有信息分析")
-                        final_response = await self._generate_final_response(analysis_results)
-                        analysis_results["final_response"] = final_response
-                        break
+                    # 在非对话模式下，直接强制进入分析阶段，不要求更多信息
+                    logger.info("检测到需要更多信息，强制开始基于现有信息分析")
+                    final_response = await self._generate_final_response(analysis_results)
+                    analysis_results["final_response"] = final_response
+                    break
                     
                 else:
                     logger.warning(f"无法解析LLM决策: {decision_text}")
@@ -1034,22 +1030,221 @@ class UniversalTravelAnalyzer:
                 "requires_action": False
             }
         else:
-            # 复杂分析，需要调用工具
-            analysis_result = await self.analyze_request(message)
-            response = analysis_result.get("final_response", "分析失败，请重试")
+            # 复杂分析，使用对话模式的分析流程
+            analysis_result = await self._analyze_request_for_chat(message, context, conversation_id)
+            response = analysis_result.get("response", "分析失败，请重试")
+            
             chat_result = {
                 "response": response,
                 "conversation_id": conversation_id,
-                "message_type": "analysis",
-                "requires_action": True,
-                "tools_used": [call.get("tool_name") for call in analysis_result.get("tool_calls", [])],
-                "confidence": analysis_result.get("confidence_score", 0.8)
+                "message_type": analysis_result.get("message_type", "analysis"),
+                "requires_action": analysis_result.get("requires_action", True),
+                "tools_used": analysis_result.get("tools_used", []),
+                "confidence": analysis_result.get("confidence", 0.8),
+                "suggestions": analysis_result.get("suggestions", [])
             }
         
         # 添加助手回复到对话历史
         self.conversation_manager.add_message(conversation_id, "assistant", response)
         
         return chat_result
+    
+    async def _analyze_request_for_chat(self, message: str, context: str, conversation_id: str) -> Dict[str, Any]:
+        """专门为对话模式设计的分析方法，支持询问更多信息"""
+        try:
+            # 分析查询意图
+            intent_analysis = await self.analyze_query_intent(message)
+            analysis_type = intent_analysis.get("analysis_type", "general")
+            
+            # 执行对话式智能分析
+            async with MCPToolManager(AMAP_MCP_URL) as tool_manager:
+                analysis_results = await self._execute_chat_analysis(
+                    tool_manager, message, intent_analysis, context, conversation_id
+                )
+            
+            return analysis_results
+            
+        except Exception as e:
+            logger.error(f"对话分析失败: {e}")
+            return {
+                "response": f"抱歉，分析过程中遇到了问题：{str(e)}。请重新描述您的需求。",
+                "message_type": "error",
+                "requires_action": False,
+                "confidence": 0.1
+            }
+    
+    async def _execute_chat_analysis(self, tool_manager: MCPToolManager, query: str,
+                                   intent_analysis: Dict[str, Any], context: str, 
+                                   conversation_id: str) -> Dict[str, Any]:
+        """执行对话式智能分析，支持询问用户更多信息"""
+        
+        analysis_results = {
+            "query": query,
+            "intent_analysis": intent_analysis,
+            "context": context,
+            "tool_calls": [],
+            "collected_data": {},
+            "conversation_id": conversation_id
+        }
+        
+        # 使用对话式LLM指导的分析流程
+        max_iterations = 10
+        iteration = 0
+        
+        while iteration < max_iterations:
+            iteration += 1
+            
+            # 获取当前状态
+            current_status = self._generate_analysis_status(analysis_results)
+            
+            # 询问LLM下一步行动（对话模式）
+            next_step_prompt = f"""
+            对话上下文:
+            {context}
+            
+            当前用户查询: "{query}"
+            分析类型: {intent_analysis.get('analysis_type', 'general')}
+            
+            当前分析状态:
+            {current_status}
+
+            已执行的工具调用:
+            {self._format_tool_calls_summary(analysis_results["tool_calls"])}
+
+            可用工具:
+            {tool_manager.get_tools_description()}
+
+            作为智能对话助手，请决定下一步行动：
+            
+            1. 如果需要调用工具获取数据，请回答：
+            ```
+            CALL_TOOL
+            工具名称: tool_name
+            参数: {{"param": "value"}}
+            原因: 详细说明调用原因
+            ```
+
+            2. 如果有足够信息可以生成分析结果，请回答：
+            ```
+            GENERATE_RESPONSE
+            原因: 说明为什么可以生成回答
+            ```
+
+            3. 如果需要向用户询问更多具体信息，请回答：
+            ```
+            ASK_USER
+            问题: 向用户询问的具体问题
+            原因: 说明为什么需要这些信息
+            建议: ["建议1", "建议2", "建议3"]
+            ```
+
+            **重要提示**: 
+            - 在对话模式下，可以主动向用户询问更多信息来提供更精确的分析
+            - 例如：询问具体地址、预算范围、时间要求等
+            - 优先尝试使用现有信息，但如果信息不足影响分析质量，可以询问用户
+
+            请分析并决策下一步。
+            """
+            
+            try:
+                decision_text = await self._call_llm_with_retry(next_step_prompt)
+                
+                logger.info(f"对话模式LLM决策 (第{iteration}轮): {decision_text}")
+                
+                # 解析决策
+                if "CALL_TOOL" in decision_text:
+                    tool_info = self._parse_tool_call_decision(decision_text)
+                    if tool_info:
+                        # 执行工具调用
+                        result = await tool_manager.call_tool(
+                            tool_info["tool_name"], 
+                            tool_info["arguments"]
+                        )
+                        
+                        analysis_results["tool_calls"].append({
+                            "iteration": iteration,
+                            "tool_name": tool_info["tool_name"],
+                            "arguments": tool_info["arguments"],
+                            "result": result,
+                            "reason": tool_info["reason"],
+                            "success": "error" not in result
+                        })
+                        
+                        # 更新收集的数据
+                        self._update_collected_data(analysis_results, tool_info["tool_name"], result)
+                        
+                elif "GENERATE_RESPONSE" in decision_text:
+                    logger.info("对话模式：LLM决定生成最终响应")
+                    final_response = await self._generate_final_response(analysis_results)
+                    
+                    return {
+                        "response": final_response,
+                        "message_type": "analysis",
+                        "requires_action": True,
+                        "tools_used": [call.get("tool_name") for call in analysis_results.get("tool_calls", [])],
+                        "confidence": 0.8
+                    }
+                    
+                elif "ASK_USER" in decision_text:
+                    # 解析用户询问信息
+                    user_question, suggestions = self._parse_ask_user_decision(decision_text)
+                    logger.info(f"对话模式：向用户询问更多信息: {user_question}")
+                    
+                    return {
+                        "response": user_question,
+                        "message_type": "question",
+                        "requires_action": False,
+                        "suggestions": suggestions,
+                        "confidence": 0.6
+                    }
+                    
+                else:
+                    logger.warning(f"对话模式：无法解析LLM决策: {decision_text}")
+                    break
+                    
+            except Exception as e:
+                logger.error(f"对话模式LLM决策处理失败: {e}")
+                break
+        
+        # 如果循环结束仍未返回，生成基于现有数据的响应
+        final_response = await self._generate_final_response(analysis_results)
+        return {
+            "response": final_response,
+            "message_type": "analysis",
+            "requires_action": True,
+            "tools_used": [call.get("tool_name") for call in analysis_results.get("tool_calls", [])],
+            "confidence": 0.7
+        }
+    
+    def _parse_ask_user_decision(self, decision_text: str) -> tuple[str, list]:
+        """解析询问用户的决策"""
+        try:
+            lines = decision_text.split('\n')
+            question = ""
+            suggestions = []
+            
+            for line in lines:
+                line = line.strip()
+                if line.startswith('问题:'):
+                    question = line.split(':', 1)[1].strip()
+                elif line.startswith('建议:'):
+                    suggestions_str = line.split(':', 1)[1].strip()
+                    # 尝试解析建议列表
+                    try:
+                        if suggestions_str.startswith('[') and suggestions_str.endswith(']'):
+                            import ast
+                            suggestions = ast.literal_eval(suggestions_str)
+                    except:
+                        suggestions = []
+            
+            if not question:
+                question = "请提供更多详细信息以便我为您提供更精确的分析。"
+            
+            return question, suggestions
+            
+        except Exception as e:
+            logger.error(f"解析询问用户决策失败: {e}")
+            return "请提供更多详细信息以便我为您提供更精确的分析。", []
     
     def _is_simple_question(self, message: str) -> bool:
         """判断是否为简单问题"""
