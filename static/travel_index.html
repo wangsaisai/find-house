@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>通用智能出行服务</title>
+    <!-- 引入marked.js用于Markdown渲染 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- 引入highlight.js用于代码高亮 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -139,16 +144,177 @@
         }
 
         .response-content {
-            background: #f8f9fa;
+            background: #ffffff;
             border-radius: 8px;
             padding: 20px;
             margin-top: 15px;
             border-left: 4px solid #667eea;
             min-height: 200px;
-            white-space: pre-wrap;
-            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             font-size: 14px;
             line-height: 1.6;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Markdown样式优化 */
+        .response-content h1 {
+            color: #2c3e50;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 8px;
+            margin-bottom: 20px;
+            font-size: 1.8rem;
+            font-weight: 600;
+        }
+
+        .response-content h2 {
+            color: #34495e;
+            margin-top: 25px;
+            margin-bottom: 15px;
+            font-size: 1.4rem;
+            font-weight: 600;
+        }
+
+        .response-content h3 {
+            color: #667eea;
+            margin-top: 20px;
+            margin-bottom: 12px;
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+
+        .response-content h4 {
+            color: #7b68ee;
+            margin-top: 15px;
+            margin-bottom: 10px;
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .response-content h5, .response-content h6 {
+            color: #6c757d;
+            margin-top: 12px;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        .response-content p {
+            margin-bottom: 12px;
+            color: #2c3e50;
+        }
+
+        .response-content ul, .response-content ol {
+            margin-bottom: 15px;
+            padding-left: 25px;
+        }
+
+        .response-content li {
+            margin-bottom: 6px;
+            color: #2c3e50;
+        }
+
+        .response-content strong {
+            color: #2c3e50;
+            font-weight: 600;
+        }
+
+        .response-content em {
+            color: #667eea;
+            font-style: italic;
+        }
+
+        .response-content table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 15px 0;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .response-content th {
+            background-color: #667eea;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }
+
+        .response-content td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #dee2e6;
+            color: #2c3e50;
+        }
+
+        .response-content tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+
+        .response-content tr:hover {
+            background-color: #e9ecef;
+        }
+
+        .response-content blockquote {
+            border-left: 4px solid #667eea;
+            padding-left: 16px;
+            margin: 15px 0;
+            color: #6c757d;
+            font-style: italic;
+            background-color: #f8f9fa;
+            padding: 12px 16px;
+            border-radius: 4px;
+        }
+
+        .response-content code {
+            background-color: #f1f3f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.9em;
+            color: #e83e8c;
+        }
+
+        .response-content pre {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 15px 0;
+            border: 1px solid #dee2e6;
+        }
+
+        .response-content pre code {
+            background: none;
+            padding: 0;
+            color: #2c3e50;
+        }
+
+        .response-content hr {
+            border: none;
+            height: 2px;
+            background: linear-gradient(to right, #667eea, #764ba2);
+            margin: 25px 0;
+            border-radius: 1px;
+        }
+
+        /* 特殊样式 */
+        .response-content .emoji {
+            font-size: 1.2em;
+        }
+
+        .response-content .highlight {
+            background-color: #fff3cd;
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+
+        /* 等待状态样式 */
+        .response-content.waiting {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #6c757d;
+            font-style: italic;
+            background: #f8f9fa;
         }
 
         .loading {
@@ -472,7 +638,8 @@
                 const result = await response.json();
 
                 if (result.success) {
-                    responseContent.innerHTML = result.response;
+                    // 使用Markdown渲染
+                    responseContent.innerHTML = renderMarkdown(result.response);
                     
                     // 显示元数据
                     const metadataContent = document.getElementById('metadata-content');
@@ -538,7 +705,7 @@
 
                 if (result.success) {
                     currentConversationId = result.conversation_id;
-                    addMessageToHistory('assistant', result.response);
+                    addMessageToHistory('assistant', result.response, false, true); // 启用Markdown渲染
                     
                     // 显示建议（如果有）
                     if (result.suggestions && result.suggestions.length > 0) {
@@ -613,6 +780,67 @@
                 sendChatMessage();
             }
         });
+
+        // Markdown渲染函数
+        function renderMarkdown(markdownText) {
+            try {
+                // 配置marked选项
+                marked.setOptions({
+                    highlight: function(code, lang) {
+                        if (lang && hljs.getLanguage(lang)) {
+                            try {
+                                return hljs.highlight(code, { language: lang }).value;
+                            } catch (err) {}
+                        }
+                        return hljs.highlightAuto(code).value;
+                    },
+                    breaks: true,
+                    gfm: true
+                });
+                
+                // 渲染Markdown
+                return marked.parse(markdownText);
+            } catch (error) {
+                console.error('Markdown渲染失败:', error);
+                // 如果渲染失败，返回原始文本（但进行HTML转义）
+                return markdownText.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+            }
+        }
+
+        // 更新addMessageToHistory函数以支持Markdown渲染
+        function addMessageToHistory(role, content, isLoading = false, useMarkdown = false) {
+            const conversationHistory = document.getElementById('conversation-history');
+            const messageId = 'msg-' + Date.now();
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.id = messageId;
+            messageDiv.style.marginBottom = '15px';
+            messageDiv.style.padding = '10px';
+            messageDiv.style.borderRadius = '8px';
+            
+            if (role === 'user') {
+                messageDiv.style.backgroundColor = '#e3f2fd';
+                messageDiv.style.marginLeft = '20px';
+                messageDiv.innerHTML = `<strong>👤 您:</strong><br>${content}`;
+            } else if (role === 'assistant') {
+                messageDiv.style.backgroundColor = '#f3e5f5';
+                messageDiv.style.marginRight = '20px';
+                if (isLoading) {
+                    messageDiv.innerHTML = `<strong>🤖 助手:</strong><br><div class="loading" style="justify-content: flex-start;">${content}</div>`;
+                } else {
+                    const renderedContent = useMarkdown ? renderMarkdown(content) : content;
+                    messageDiv.innerHTML = `<strong>🤖 助手:</strong><br><div style="margin-top: 8px;">${renderedContent}</div>`;
+                }
+            } else if (role === 'system') {
+                messageDiv.style.backgroundColor = '#fff3e0';
+                messageDiv.innerHTML = content;
+            }
+            
+            conversationHistory.appendChild(messageDiv);
+            conversationHistory.scrollTop = conversationHistory.scrollHeight;
+            
+            return messageId;
+        }
 
         // 页面加载时获取系统能力
         window.addEventListener('load', async function() {
